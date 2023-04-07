@@ -1,5 +1,6 @@
 //! A bounded single-producer single-consume pipe.
 
+use std::convert::Infallible;
 use std::io::{self, Read, Write};
 use std::mem;
 use std::pin::Pin;
@@ -173,6 +174,15 @@ impl Reader {
         self.drain_inner(cx, dest)
     }
 
+    /// Reads bytes from this reader.
+    pub fn poll_drain_bytes(&mut self, cx: &mut Context<'_>, dest: &mut [u8]) -> Poll<usize> {
+        match self.drain_inner(cx, WriteBytes(dest)) {
+            Poll::Ready(Ok(n)) => Poll::Ready(n),
+            Poll::Ready(Err(e)) => match e {},
+            Poll::Pending => Poll::Pending,
+        }
+    }
+
     /// Reads bytes from this reader and writes into blocking `dest`.
     fn drain_inner<W: WriteLike>(
         &mut self,
@@ -275,7 +285,7 @@ impl AsyncRead for Reader {
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        self.poll_drain(cx, buf)
+        self.poll_drain_bytes(cx, buf).map(Ok)
     }
 }
 
@@ -283,6 +293,15 @@ impl Writer {
     /// Reads bytes from blocking `src` and writes into this writer.
     pub fn poll_fill(&mut self, cx: &mut Context<'_>, src: impl Read) -> Poll<io::Result<usize>> {
         self.fill_inner(cx, src)
+    }
+
+    /// Writes bytes into this writer.
+    pub fn poll_fill_bytes(&mut self, cx: &mut Context<'_>, bytes: &[u8]) -> Poll<usize> {
+        match self.fill_inner(cx, ReadBytes(bytes)) {
+            Poll::Ready(Ok(n)) => Poll::Ready(n),
+            Poll::Ready(Err(e)) => match e {},
+            Poll::Pending => Poll::Pending,
+        }
     }
 
     /// Reads bytes from blocking `src` and writes into this writer.
@@ -405,7 +424,7 @@ impl AsyncWrite for Writer {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        self.poll_fill(cx, buf)
+        self.poll_fill_bytes(cx, buf).map(Ok)
     }
 
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
@@ -441,6 +460,19 @@ impl<R: Read> ReadLike for R {
     }
 }
 
+struct ReadBytes<'a>(&'a [u8]);
+
+impl ReadLike for ReadBytes<'_> {
+    type Error = Infallible;
+
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
+        let n = self.0.len().min(buf.len());
+        buf[..n].copy_from_slice(&self.0[..n]);
+        self.0 = &self.0[n..];
+        Ok(n)
+    }
+}
+
 /// A trait for writing bytes from a pipe.
 trait WriteLike {
     type Error;
@@ -453,6 +485,24 @@ impl<W: Write> WriteLike for W {
 
     fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
         Write::write(self, buf)
+    }
+}
+
+struct WriteBytes<'a>(&'a mut [u8]);
+
+impl WriteLike for WriteBytes<'_> {
+    type Error = Infallible;
+
+    fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
+        let n = self.0.len().min(buf.len());
+        self.0[..n].copy_from_slice(&buf[..n]);
+
+        {
+            let slice = mem::take(&mut self.0);
+            self.0 = &mut slice[n..];
+        }
+
+        Ok(n)
     }
 }
 
