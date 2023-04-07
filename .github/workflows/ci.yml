@@ -38,7 +38,9 @@ jobs:
         if: startsWith(matrix.rust, 'nightly')
         run: cargo check -Z features=dev_dep
       - run: cargo test --all
-      - run: cargo test --no-default-features --tests
+      - name: Build with no default features
+        # Use no-std target to ensure we don't link to std.
+        run: cargo build --no-default-features --target thumbv7m-none-eabi
 
   msrv:
     runs-on: ubuntu-latest

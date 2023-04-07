@@ -1,16 +1,27 @@
-//! A bounded single-producer single-consume pipe.
+//! A bounded single-producer single-consumer pipe.
 
-use std::convert::Infallible;
-use std::io::{self, Read, Write};
-use std::mem;
-use std::pin::Pin;
-use std::slice;
-use std::sync::atomic::{self, AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
-use std::task::{Context, Poll};
-use std::vec::Vec;
+#![cfg_attr(not(feature = "std"), no_std)]
+
+extern crate alloc;
+
+use core::convert::Infallible;
+use core::mem;
+use core::slice;
+use core::sync::atomic::{self, AtomicBool, AtomicUsize, Ordering};
+use core::task::{Context, Poll};
+
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+
+#[cfg(feature = "std")]
+use std::{
+    io::{self, Read, Write},
+    pin::Pin,
+};
 
 use atomic_waker::AtomicWaker;
+
+#[cfg(feature = "std")]
 use futures_io::{AsyncRead, AsyncWrite};
 
 macro_rules! ready {
@@ -166,6 +177,7 @@ impl Drop for Writer {
 
 impl Reader {
     /// Reads bytes from this reader and writes into blocking `dest`.
+    #[cfg(feature = "std")]
     pub fn poll_drain(
         &mut self,
         cx: &mut Context<'_>,
@@ -279,6 +291,7 @@ impl Reader {
     }
 }
 
+#[cfg(feature = "std")]
 impl AsyncRead for Reader {
     fn poll_read(
         mut self: Pin<&mut Self>,
@@ -291,6 +304,7 @@ impl AsyncRead for Reader {
 
 impl Writer {
     /// Reads bytes from blocking `src` and writes into this writer.
+    #[cfg(feature = "std")]
     pub fn poll_fill(&mut self, cx: &mut Context<'_>, src: impl Read) -> Poll<io::Result<usize>> {
         self.fill_inner(cx, src)
     }
@@ -418,6 +432,7 @@ impl Writer {
     }
 }
 
+#[cfg(feature = "std")]
 impl AsyncWrite for Writer {
     fn poll_write(
         mut self: Pin<&mut Self>,
@@ -452,6 +467,7 @@ trait ReadLike {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error>;
 }
 
+#[cfg(feature = "std")]
 impl<R: Read> ReadLike for R {
     type Error = io::Error;
 
@@ -480,6 +496,7 @@ trait WriteLike {
     fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error>;
 }
 
+#[cfg(feature = "std")]
 impl<W: Write> WriteLike for W {
     type Error = io::Error;
 
@@ -507,6 +524,7 @@ impl WriteLike for WriteBytes<'_> {
 }
 
 /// Yield with some small probability.
+#[cfg(feature = "std")]
 fn maybe_yield(cx: &mut Context<'_>) -> Poll<()> {
     if fastrand::usize(..100) == 0 {
         cx.waker().wake_by_ref();
@@ -514,6 +532,13 @@ fn maybe_yield(cx: &mut Context<'_>) -> Poll<()> {
     } else {
         Poll::Ready(())
     }
+}
+
+/// Yield with some small probability.
+#[cfg(not(feature = "std"))]
+fn maybe_yield(_cx: &mut Context<'_>) -> Poll<()> {
+    // TODO: Once fastrand works on no_std, use that instead.
+    Poll::Ready(())
 }
 
 /// ```
