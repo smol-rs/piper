@@ -14,7 +14,20 @@
 //! When the receiver is dropped, the pipe is closed and no more bytes and be written into it.
 //! Further writes will result in `Ok(0)`, i.e. they will always 'successfully' write 0 bytes.
 //!
+//! # Version 0.2.0 Notes
+//!
+//! Previously, this crate contained other synchronization primitives, such as bounded channels, locks,
+//! and event listeners. These have been split out into their own crates:
+//!
+//! - [`async-channel`](https://docs.rs/async-channel)
+//! - [`async-dup`](https://docs.rs/async-dup)
+//! - [`async-lock`](https://docs.rs/async-lock)
+//! - [`async-mutex`](https://docs.rs/async-mutex)
+//! - [`event-listener`](https://docs.rs/event-listener)
+//!
 //! # Examples
+//! 
+//! ## Asynchronous Tasks
 //!
 //! Communicate between asynchronous tasks, potentially on other threads.
 //!
@@ -74,6 +87,8 @@
 //!         drop(signal);
 //!     }));
 //! ```
+//! 
+//! ## Blocking I/O
 //!
 //! File I/O is blocking; therefore, in `async` code, you must run it on another thread. This example
 //! spawns another thread for reading a file and writing it to a pipe.
@@ -341,6 +356,8 @@ impl Reader {
     ///
     /// This method is only available when the `std` feature is enabled. For `no_std` environments,
     /// consider using [`poll_drain_bytes`] instead.
+    /// 
+    /// [`poll_drain_bytes`]: #method.poll_drain_bytes
     ///
     /// # Examples
     ///
@@ -376,6 +393,8 @@ impl Reader {
     /// Because of this, it is infallible and can be used in `no_std` environments.
     ///
     /// The same conditions that apply to [`poll_drain`] apply to this method.
+    /// 
+    /// [`poll_drain`]: #method.poll_drain
     ///
     /// # Examples
     ///
@@ -522,6 +541,8 @@ impl Writer {
     ///
     /// This method is only available when the `std` feature is enabled. For `no_std` environments,
     /// consider using [`poll_fill_bytes`] instead.
+    /// 
+    /// [`poll_fill_bytes`]: #method.poll_fill_bytes
     ///
     /// # Examples
     ///
@@ -554,6 +575,8 @@ impl Writer {
     /// Because of this, it is infallible and can be used in `no_std` environments.
     ///
     /// The same conditions that apply to [`poll_fill`] apply to this method.
+    /// 
+    /// [`poll_fill`]: #method.poll_fill
     ///
     /// # Examples
     ///
