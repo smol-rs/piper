@@ -1,0 +1,12 @@
+[package]
+authors = ["Stjepan Glavina <stjepang@gmail.com>", "John Nunley <jtnunley01@gmail.com>"]
+description = "Async pipes, channels, mutexes, and more."
+edition = "2018"
+license = "MIT OR Apache-2.0"
+name = "piper"
+repository = "https://github.com/stjepang/piper"
+version = "0.2.0"
+
+[dependencies]
+atomic-waker = "1.1.0"
+fastrand = "1.9.0"
