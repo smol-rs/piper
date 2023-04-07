@@ -2,6 +2,7 @@
 
 use std::io::{self, Read, Write};
 use std::mem;
+use std::pin::Pin;
 use std::slice;
 use std::sync::atomic::{self, AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -9,6 +10,7 @@ use std::task::{Context, Poll};
 use std::vec::Vec;
 
 use atomic_waker::AtomicWaker;
+use futures_io::{AsyncRead, AsyncWrite};
 
 macro_rules! ready {
     ($e:expr) => {{
@@ -254,6 +256,16 @@ impl Reader {
     }
 }
 
+impl AsyncRead for Reader {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        self.drain(cx, buf)
+    }
+}
+
 impl Writer {
     /// Reads bytes from blocking `src` and writes into this writer.
     pub fn fill(&mut self, cx: &mut Context<'_>, mut src: impl Read) -> Poll<io::Result<usize>> {
@@ -362,6 +374,33 @@ impl Writer {
             // Wake the reader because the pipe is not empty.
             self.inner.reader.wake();
         }
+    }
+}
+
+impl AsyncWrite for Writer {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        self.fill(cx, buf)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        // Nothing to flush.
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        // Set the closed flag.
+        self.inner.closed.store(true, Ordering::Release);
+
+        // Wake up any tasks that may be waiting on the pipe.
+        self.inner.reader.wake();
+        self.inner.writer.wake();
+
+        // The pipe is now closed.
+        Poll::Ready(Ok(()))
     }
 }
 

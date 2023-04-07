@@ -10,3 +10,4 @@ version = "0.2.0"
 [dependencies]
 atomic-waker = "1.1.0"
 fastrand = "1.9.0"
+futures-io = "0.3.28"
