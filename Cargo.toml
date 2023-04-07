@@ -4,10 +4,14 @@ description = "Async pipes, channels, mutexes, and more."
 edition = "2018"
 license = "MIT OR Apache-2.0"
 name = "piper"
-repository = "https://github.com/stjepang/piper"
+repository = "https://github.com/notgull/piper"
 version = "0.2.0"
 
 [dependencies]
 atomic-waker = "1.1.0"
 fastrand = "1.9.0"
 futures-io = "0.3.28"
+
+[dev-dependencies]
+easy-parallel = "3.2.0"
+futures-lite = "1.12.0"
