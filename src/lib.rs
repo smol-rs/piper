@@ -1,6 +1,155 @@
 //! A bounded single-producer single-consumer pipe.
+//!
+//! This crate provides a ring buffer that can be asynchronously read from and written to. It is
+//! created via the [`pipe`] function, which returns a pair of [`Reader`] and [`Writer`] handles.
+//! They implement the [`AsyncRead`] and [`AsyncWrite`] traits, respectively.
+//!
+//! The handles are single-producer/single-consumer; to clarify, they cannot be cloned and need `&mut`
+//! access to read or write to them. If multiple-producer/multiple-consumer handles are needed,
+//! consider wrapping them in an `Arc<Mutex<...>>` or similar.
+//!
+//! When the sender is dropped, remaining bytes in the pipe can still be read. After that, attempts
+//! to read will result in `Ok(0)`, i.e. they will always 'successfully' read 0 bytes.
+//!
+//! When the receiver is dropped, the pipe is closed and no more bytes and be written into it.
+//! Further writes will result in `Ok(0)`, i.e. they will always 'successfully' write 0 bytes.
+//!
+//! # Examples
+//!
+//! Communicate between asynchronous tasks, potentially on other threads.
+//!
+//! ```
+//! use async_channel::unbounded;
+//! use async_executor::Executor;
+//! use easy_parallel::Parallel;
+//! use futures_lite::{future, prelude::*};
+//! use std::time::Duration;
+//!
+//! // Create a pair of handles.
+//! let (mut reader, mut writer) = piper::pipe(1024);
+//!
+//! // Create the executor.
+//! let ex = Executor::new();
+//! let (signal, shutdown) = unbounded::<()>();
+//!
+//! // Spawn a detached task for random data to the pipe.
+//! let writer = ex.spawn(async move {
+//!     for _ in 0..1_000 {
+//!         // Generate 8 random numnbers.
+//!         let random = fastrand::u64(..).to_le_bytes();
+//!
+//!         // Write them to the pipe.
+//!         writer.write_all(&random).await.unwrap();
+//!
+//!         // Wait a bit.
+//!         async_io::Timer::after(Duration::from_millis(5)).await;
+//!     }
+//!
+//!     // Drop the writer to close the pipe.
+//!     drop(writer);
+//! });
+//!
+//! // Detach the task so that it runs in the background.
+//! writer.detach();
+//!
+//! // Spawn a task for reading from the pipe.
+//! let reader = ex.spawn(async move {
+//!     let mut buf = vec![];
+//!
+//!     // Read all bytes from the pipe.
+//!     reader.read_to_end(&mut buf).await.unwrap();
+//!
+//!     println!("Random data: {:#?}", buf);
+//! });
+//!
+//! Parallel::new()
+//!     // Run four executor threads.
+//!     .each(0..4, |_| future::block_on(ex.run(shutdown.recv())))
+//!     // Run the main future on the current thread.
+//!     .finish(|| future::block_on(async {
+//!         // Wait for the reader to finish.
+//!         reader.await;
+//!
+//!         // Signal the executor threads to shut down.
+//!         drop(signal);
+//!     }));
+//! ```
+//!
+//! File I/O is blocking; therefore, in `async` code, you must run it on another thread. This example
+//! spawns another thread for reading a file and writing it to a pipe.
+//!
+//! ```no_run
+//! use futures_lite::{future, prelude::*};
+//! use std::fs::File;
+//! use std::io::prelude::*;
+//! use std::thread;
+//!
+//! // Create a pair of handles.
+//! let (mut r, mut w) = piper::pipe(1024);
+//!
+//! // Spawn a thread for reading a file.
+//! thread::spawn(move || {
+//!     let mut file = File::open("Cargo.toml").unwrap();
+//!
+//!     // Read the file into a buffer.
+//!     let mut buf = [0u8; 16384];
+//!     future::block_on(async move {
+//!         loop {
+//!             // Read a chunk of bytes from the file.
+//!             // Blocking is okay here, since this is a separate thread.
+//!             let n = file.read(&mut buf).unwrap();
+//!             if n == 0 {
+//!                 break;
+//!             }
+//!
+//!             // Write the chunk to the pipe.
+//!             w.write_all(&buf[..n]).await.unwrap();
+//!         }
+//!
+//!         // Close the pipe.
+//!         drop(w);
+//!     });
+//! });
+//!
+//! # future::block_on(async move {
+//! // Read bytes from the pipe.
+//! let mut buf = vec![];
+//! r.read_to_end(&mut buf).await.unwrap();
+//!
+//! println!("Read {} bytes", buf.len());
+//! # });
+//! ```
+//!
+//! However, the lower-level [`poll_fill`] and [`poll_drain`] methods take `impl Read` and `impl Write`
+//! arguments, respectively. This allows you to skip the buffer entirely and read/write directly from
+//! the file into the pipe. This approach should be preferred when possible, as it avoids an extra
+//! copy.
+//!
+//! ```no_run
+//! # use futures_lite::future;
+//! # use std::fs::File;
+//! # let mut file: File = unimplemented!();
+//! # let mut w: piper::Writer = unimplemented!();
+//! // In the `future::block_on` call above...
+//! # future::block_on(async move {
+//! loop {
+//!     let n = future::poll_fn(|cx| w.poll_fill(cx, &mut file)).await.unwrap();
+//!     if n == 0 {
+//!         break;
+//!     }
+//! }
+//! # });
+//! ```
+//!
+//! The [`blocking`] crate is preferred in this use case, since it uses more efficient strategies for
+//! thread management and pipes.
+//!
+//! [`poll_fill`]: struct.Writer.html#method.poll_fill
+//! [`poll_drain`]: struct.Reader.html#method.poll_drain
+//! [`blocking`]: https://docs.rs/blocking
 
 #![cfg_attr(not(feature = "std"), no_std)]
+#![forbid(missing_docs)]
 
 extern crate alloc;
 
@@ -37,11 +186,11 @@ macro_rules! ready {
 ///
 /// A pipe is a ring buffer of `cap` bytes that can be asynchronously read from and written to.
 ///
-/// When the sender is dropped, remaining bytes in the pipe can still be read. After that, attempts
-/// to read will result in `Ok(0)`, i.e. they will always 'successfully' read 0 bytes.
+/// See the [crate-level documentation](index.html) for more details.
 ///
-/// When the receiver is dropped, the pipe is closed and no more bytes and be written into it.
-/// Further writes will result in `Ok(0)`, i.e. they will always 'successfully' write 0 bytes.
+/// # Panics
+///
+/// This function panics if `cap` is 0 or if `cap * 2` overflows a `usize`.
 pub fn pipe(cap: usize) -> (Reader, Writer) {
     assert!(cap > 0, "capacity must be positive");
     assert!(cap.checked_mul(2).is_some(), "capacity is too large");
@@ -78,6 +227,8 @@ pub fn pipe(cap: usize) -> (Reader, Writer) {
 }
 
 /// The reading side of a pipe.
+///
+/// This type is created by the [`pipe`] function. See its documentation for more details.
 pub struct Reader {
     /// The inner ring buffer.
     inner: Arc<Pipe>,
@@ -94,6 +245,8 @@ pub struct Reader {
 }
 
 /// The writing side of a pipe.
+///
+/// This type is created by the [`pipe`] function. See its documentation for more details.
 pub struct Writer {
     /// The inner ring buffer.
     inner: Arc<Pipe>,
@@ -177,6 +330,36 @@ impl Drop for Writer {
 
 impl Reader {
     /// Reads bytes from this reader and writes into blocking `dest`.
+    /// 
+    /// This method reads directly from the pipe's internal buffer into `dest`. This avoids an extra copy,
+    /// but it may block the thread if `dest` blocks.
+    /// 
+    /// If the pipe is empty, this method returns `Poll::Pending`. If the pipe is closed, this method
+    /// returns `Poll::Ready(Ok(0))`. Errors in `dest` are bubbled up through `Poll::Ready(Err(e))`.
+    /// Otherwise, this method returns `Poll::Ready(Ok(n))` where `n` is the number of bytes written.
+    /// 
+    /// This method is only available when the `std` feature is enabled. For `no_std` environments,
+    /// consider using [`poll_drain_bytes`] instead.
+    /// 
+    /// # Examples
+    /// 
+    /// ```
+    /// use futures_lite::{future, prelude::*};
+    /// # future::block_on(async {
+    /// 
+    /// let (mut r, mut w) = piper::pipe(1024);
+    /// 
+    /// // Write some data to the pipe.
+    /// w.write_all(b"hello world").await.unwrap();
+    /// 
+    /// // Try reading from the pipe.
+    /// let mut buf = [0; 1024];
+    /// let n = future::poll_fn(|cx| r.poll_drain(cx, &mut buf[..])).await.unwrap();
+    /// 
+    /// // The data was written to the buffer.
+    /// assert_eq!(&buf[..n], b"hello world");
+    /// # });
+    /// ```
     #[cfg(feature = "std")]
     pub fn poll_drain(
         &mut self,
@@ -187,6 +370,30 @@ impl Reader {
     }
 
     /// Reads bytes from this reader.
+    /// 
+    /// Rather than taking a `Write` trait object, this method takes a slice of bytes to write into.
+    /// Because of this, it is infallible and can be used in `no_std` environments.
+    /// 
+    /// The same conditions that apply to [`poll_drain`] apply to this method.
+    /// 
+    /// # Examples
+    /// 
+    /// ```
+    /// use futures_lite::{future, prelude::*};
+    /// # future::block_on(async {
+    /// let (mut r, mut w) = piper::pipe(1024);
+    /// 
+    /// // Write some data to the pipe.
+    /// w.write_all(b"hello world").await.unwrap();
+    /// 
+    /// // Try reading from the pipe.
+    /// let mut buf = [0; 1024];
+    /// let n = future::poll_fn(|cx| r.poll_drain_bytes(cx, &mut buf[..])).await;
+    /// 
+    /// // The data was written to the buffer.
+    /// assert_eq!(&buf[..n], b"hello world");
+    /// # });
+    /// ```
     pub fn poll_drain_bytes(&mut self, cx: &mut Context<'_>, dest: &mut [u8]) -> Poll<usize> {
         match self.drain_inner(cx, WriteBytes(dest)) {
             Poll::Ready(Ok(n)) => Poll::Ready(n),
@@ -304,12 +511,69 @@ impl AsyncRead for Reader {
 
 impl Writer {
     /// Reads bytes from blocking `src` and writes into this writer.
+    /// 
+    /// This method writes directly from `src` into the pipe's internal buffer. This avoids an extra copy,
+    /// but it may block the thread if `src` blocks.
+    /// 
+    /// If the pipe is full, this method returns `Poll::Pending`. If the pipe is closed, this method
+    /// returns `Poll::Ready(Ok(0))`. Errors in `src` are bubbled up through `Poll::Ready(Err(e))`.
+    /// Otherwise, this method returns `Poll::Ready(Ok(n))` where `n` is the number of bytes read.
+    /// 
+    /// This method is only available when the `std` feature is enabled. For `no_std` environments,
+    /// consider using [`poll_fill_bytes`] instead.
+    /// 
+    /// # Examples
+    /// 
+    /// ```
+    /// use futures_lite::{future, prelude::*};
+    /// # future::block_on(async {
+    /// 
+    /// // Create a pipe.
+    /// let (mut reader, mut writer) = piper::pipe(1024);
+    /// 
+    /// // Fill the pipe with some bytes.
+    /// let data = b"hello world";
+    /// let n = future::poll_fn(|cx| writer.poll_fill(cx, &data[..])).await.unwrap();
+    /// assert_eq!(n, data.len());
+    /// 
+    /// // Read the bytes back.
+    /// let mut buf = [0; 1024];
+    /// reader.read_exact(&mut buf[..data.len()]).await.unwrap();
+    /// assert_eq!(&buf[..data.len()], data);
+    /// # });
+    /// ```
     #[cfg(feature = "std")]
     pub fn poll_fill(&mut self, cx: &mut Context<'_>, src: impl Read) -> Poll<io::Result<usize>> {
         self.fill_inner(cx, src)
     }
 
     /// Writes bytes into this writer.
+    /// 
+    /// Rather than taking a `Read` trait object, this method takes a slice of bytes to read from.
+    /// Because of this, it is infallible and can be used in `no_std` environments.
+    /// 
+    /// The same conditions that apply to [`poll_fill`] apply to this method.
+    /// 
+    /// # Examples
+    /// 
+    /// ```
+    /// use futures_lite::{future, prelude::*};
+    /// # future::block_on(async {
+    /// 
+    /// // Create a pipe.
+    /// let (mut reader, mut writer) = piper::pipe(1024);
+    /// 
+    /// // Fill the pipe with some bytes.
+    /// let data = b"hello world";
+    /// let n = future::poll_fn(|cx| writer.poll_fill_bytes(cx, &data[..])).await;
+    /// assert_eq!(n, data.len());
+    /// 
+    /// // Read the bytes back.
+    /// let mut buf = [0; 1024];
+    /// reader.read_exact(&mut buf[..data.len()]).await.unwrap();
+    /// assert_eq!(&buf[..data.len()], data);
+    /// # });
+    /// ```
     pub fn poll_fill_bytes(&mut self, cx: &mut Context<'_>, bytes: &[u8]) -> Poll<usize> {
         match self.fill_inner(cx, ReadBytes(bytes)) {
             Poll::Ready(Ok(n)) => Poll::Ready(n),
@@ -462,8 +726,10 @@ impl AsyncWrite for Writer {
 
 /// A trait for reading bytes into a pipe.
 trait ReadLike {
+    /// The error type.
     type Error;
 
+    /// Reads bytes into the given buffer.
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error>;
 }
 
@@ -476,6 +742,7 @@ impl<R: Read> ReadLike for R {
     }
 }
 
+/// Implements `no_std` reading around a byte slice.
 struct ReadBytes<'a>(&'a [u8]);
 
 impl ReadLike for ReadBytes<'_> {
@@ -491,8 +758,10 @@ impl ReadLike for ReadBytes<'_> {
 
 /// A trait for writing bytes from a pipe.
 trait WriteLike {
+    /// The error type.
     type Error;
 
+    /// Writes bytes from the given buffer.
     fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error>;
 }
 
@@ -505,6 +774,7 @@ impl<W: Write> WriteLike for W {
     }
 }
 
+/// Implements `no_std` writing around a byte slice.
 struct WriteBytes<'a>(&'a mut [u8]);
 
 impl WriteLike for WriteBytes<'_> {
@@ -534,7 +804,7 @@ fn maybe_yield(cx: &mut Context<'_>) -> Poll<()> {
     }
 }
 
-/// Yield with some small probability.
+/// Yielding isn't supported yet on no_std.
 #[cfg(not(feature = "std"))]
 fn maybe_yield(_cx: &mut Context<'_>) -> Poll<()> {
     // TODO: Once fastrand works on no_std, use that instead.
