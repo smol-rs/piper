@@ -330,32 +330,32 @@ impl Drop for Writer {
 
 impl Reader {
     /// Reads bytes from this reader and writes into blocking `dest`.
-    /// 
+    ///
     /// This method reads directly from the pipe's internal buffer into `dest`. This avoids an extra copy,
     /// but it may block the thread if `dest` blocks.
-    /// 
+    ///
     /// If the pipe is empty, this method returns `Poll::Pending`. If the pipe is closed, this method
     /// returns `Poll::Ready(Ok(0))`. Errors in `dest` are bubbled up through `Poll::Ready(Err(e))`.
     /// Otherwise, this method returns `Poll::Ready(Ok(n))` where `n` is the number of bytes written.
-    /// 
+    ///
     /// This method is only available when the `std` feature is enabled. For `no_std` environments,
     /// consider using [`poll_drain_bytes`] instead.
-    /// 
+    ///
     /// # Examples
-    /// 
+    ///
     /// ```
     /// use futures_lite::{future, prelude::*};
     /// # future::block_on(async {
-    /// 
+    ///
     /// let (mut r, mut w) = piper::pipe(1024);
-    /// 
+    ///
     /// // Write some data to the pipe.
     /// w.write_all(b"hello world").await.unwrap();
-    /// 
+    ///
     /// // Try reading from the pipe.
     /// let mut buf = [0; 1024];
     /// let n = future::poll_fn(|cx| r.poll_drain(cx, &mut buf[..])).await.unwrap();
-    /// 
+    ///
     /// // The data was written to the buffer.
     /// assert_eq!(&buf[..n], b"hello world");
     /// # });
@@ -370,26 +370,26 @@ impl Reader {
     }
 
     /// Reads bytes from this reader.
-    /// 
+    ///
     /// Rather than taking a `Write` trait object, this method takes a slice of bytes to write into.
     /// Because of this, it is infallible and can be used in `no_std` environments.
-    /// 
+    ///
     /// The same conditions that apply to [`poll_drain`] apply to this method.
-    /// 
+    ///
     /// # Examples
-    /// 
+    ///
     /// ```
     /// use futures_lite::{future, prelude::*};
     /// # future::block_on(async {
     /// let (mut r, mut w) = piper::pipe(1024);
-    /// 
+    ///
     /// // Write some data to the pipe.
     /// w.write_all(b"hello world").await.unwrap();
-    /// 
+    ///
     /// // Try reading from the pipe.
     /// let mut buf = [0; 1024];
     /// let n = future::poll_fn(|cx| r.poll_drain_bytes(cx, &mut buf[..])).await;
-    /// 
+    ///
     /// // The data was written to the buffer.
     /// assert_eq!(&buf[..n], b"hello world");
     /// # });
@@ -511,31 +511,31 @@ impl AsyncRead for Reader {
 
 impl Writer {
     /// Reads bytes from blocking `src` and writes into this writer.
-    /// 
+    ///
     /// This method writes directly from `src` into the pipe's internal buffer. This avoids an extra copy,
     /// but it may block the thread if `src` blocks.
-    /// 
+    ///
     /// If the pipe is full, this method returns `Poll::Pending`. If the pipe is closed, this method
     /// returns `Poll::Ready(Ok(0))`. Errors in `src` are bubbled up through `Poll::Ready(Err(e))`.
     /// Otherwise, this method returns `Poll::Ready(Ok(n))` where `n` is the number of bytes read.
-    /// 
+    ///
     /// This method is only available when the `std` feature is enabled. For `no_std` environments,
     /// consider using [`poll_fill_bytes`] instead.
-    /// 
+    ///
     /// # Examples
-    /// 
+    ///
     /// ```
     /// use futures_lite::{future, prelude::*};
     /// # future::block_on(async {
-    /// 
+    ///
     /// // Create a pipe.
     /// let (mut reader, mut writer) = piper::pipe(1024);
-    /// 
+    ///
     /// // Fill the pipe with some bytes.
     /// let data = b"hello world";
     /// let n = future::poll_fn(|cx| writer.poll_fill(cx, &data[..])).await.unwrap();
     /// assert_eq!(n, data.len());
-    /// 
+    ///
     /// // Read the bytes back.
     /// let mut buf = [0; 1024];
     /// reader.read_exact(&mut buf[..data.len()]).await.unwrap();
@@ -548,26 +548,26 @@ impl Writer {
     }
 
     /// Writes bytes into this writer.
-    /// 
+    ///
     /// Rather than taking a `Read` trait object, this method takes a slice of bytes to read from.
     /// Because of this, it is infallible and can be used in `no_std` environments.
-    /// 
+    ///
     /// The same conditions that apply to [`poll_fill`] apply to this method.
-    /// 
+    ///
     /// # Examples
-    /// 
+    ///
     /// ```
     /// use futures_lite::{future, prelude::*};
     /// # future::block_on(async {
-    /// 
+    ///
     /// // Create a pipe.
     /// let (mut reader, mut writer) = piper::pipe(1024);
-    /// 
+    ///
     /// // Fill the pipe with some bytes.
     /// let data = b"hello world";
     /// let n = future::poll_fn(|cx| writer.poll_fill_bytes(cx, &data[..])).await;
     /// assert_eq!(n, data.len());
-    /// 
+    ///
     /// // Read the bytes back.
     /// let mut buf = [0; 1024];
     /// reader.read_exact(&mut buf[..data.len()]).await.unwrap();
@@ -784,8 +784,10 @@ impl WriteLike for WriteBytes<'_> {
         let n = self.0.len().min(buf.len());
         self.0[..n].copy_from_slice(&buf[..n]);
 
+        // mem::take() is not available on 1.36
+        #[allow(clippy::mem_replace_with_default)]
         {
-            let slice = mem::take(&mut self.0);
+            let slice = mem::replace(&mut self.0, &mut []);
             self.0 = &mut slice[n..];
         }
 
