@@ -46,3 +46,15 @@ fn read() {
         })
         .run();
 }
+
+#[should_panic]
+#[test]
+fn zero_cap_pipe() {
+    let _ = pipe(0);
+}
+
+#[should_panic]
+#[test]
+fn large_pipe() {
+    let _ = pipe(core::usize::MAX);
+}

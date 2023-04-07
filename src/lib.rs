@@ -156,11 +156,12 @@ extern crate alloc;
 use core::convert::Infallible;
 use core::mem;
 use core::slice;
-use core::sync::atomic::{self, AtomicBool, AtomicUsize, Ordering};
 use core::task::{Context, Poll};
 
-use alloc::sync::Arc;
 use alloc::vec::Vec;
+
+use sync::atomic::{self, AtomicBool, AtomicUsize, Ordering};
+use sync::Arc;
 
 #[cfg(feature = "std")]
 use std::{
@@ -820,3 +821,17 @@ fn maybe_yield(_cx: &mut Context<'_>) -> Poll<()> {
 /// _send_sync::<Writer>();
 /// ```
 fn _assert_send_sync() {}
+
+mod sync {
+    #[cfg(not(feature = "portable-atomic"))]
+    pub use core::sync::atomic;
+
+    #[cfg(not(feature = "portable-atomic"))]
+    pub use alloc::sync::Arc;
+
+    #[cfg(feature = "portable-atomic")]
+    pub use portable_atomic_crate as atomic;
+
+    #[cfg(feature = "portable-atomic")]
+    pub use portable_atomic_util::Arc;
+}
