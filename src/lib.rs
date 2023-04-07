@@ -165,7 +165,11 @@ impl Drop for Writer {
 
 impl Reader {
     /// Reads bytes from this reader and writes into blocking `dest`.
-    pub fn drain(&mut self, cx: &mut Context<'_>, dest: impl Write) -> Poll<io::Result<usize>> {
+    pub fn poll_drain(
+        &mut self,
+        cx: &mut Context<'_>,
+        dest: impl Write,
+    ) -> Poll<io::Result<usize>> {
         self.drain_inner(cx, dest)
     }
 
@@ -271,13 +275,13 @@ impl AsyncRead for Reader {
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        self.drain(cx, buf)
+        self.poll_drain(cx, buf)
     }
 }
 
 impl Writer {
     /// Reads bytes from blocking `src` and writes into this writer.
-    pub fn fill(&mut self, cx: &mut Context<'_>, src: impl Read) -> Poll<io::Result<usize>> {
+    pub fn poll_fill(&mut self, cx: &mut Context<'_>, src: impl Read) -> Poll<io::Result<usize>> {
         self.fill_inner(cx, src)
     }
 
@@ -401,7 +405,7 @@ impl AsyncWrite for Writer {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        self.fill(cx, buf)
+        self.poll_fill(cx, buf)
     }
 
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
