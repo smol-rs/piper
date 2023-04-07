@@ -1,11 +1,11 @@
 //! A bounded single-producer single-consume pipe.
 
-use std::io::{self, Write, Read};
+use std::io::{self, Read, Write};
 use std::mem;
-use std::task::{Poll, Context};
 use std::slice;
-use std::sync::atomic::{self, AtomicUsize, AtomicBool, Ordering};
+use std::sync::atomic::{self, AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::vec::Vec;
 
 use atomic_waker::AtomicWaker;
@@ -15,7 +15,7 @@ macro_rules! ready {
         match $e {
             Poll::Ready(t) => t,
             Poll::Pending => return Poll::Pending,
-        }  
+        }
     }};
 }
 
