@@ -165,7 +165,16 @@ impl Drop for Writer {
 
 impl Reader {
     /// Reads bytes from this reader and writes into blocking `dest`.
-    pub fn drain(&mut self, cx: &mut Context<'_>, mut dest: impl Write) -> Poll<io::Result<usize>> {
+    pub fn drain(&mut self, cx: &mut Context<'_>, dest: impl Write) -> Poll<io::Result<usize>> {
+        self.drain_inner(cx, dest)
+    }
+
+    /// Reads bytes from this reader and writes into blocking `dest`.
+    fn drain_inner<W: WriteLike>(
+        &mut self,
+        cx: &mut Context<'_>,
+        mut dest: W,
+    ) -> Poll<Result<usize, W::Error>> {
         let cap = self.inner.cap;
 
         // Calculates the distance between two indices.
@@ -268,7 +277,16 @@ impl AsyncRead for Reader {
 
 impl Writer {
     /// Reads bytes from blocking `src` and writes into this writer.
-    pub fn fill(&mut self, cx: &mut Context<'_>, mut src: impl Read) -> Poll<io::Result<usize>> {
+    pub fn fill(&mut self, cx: &mut Context<'_>, src: impl Read) -> Poll<io::Result<usize>> {
+        self.fill_inner(cx, src)
+    }
+
+    /// Reads bytes from blocking `src` and writes into this writer.
+    fn fill_inner<R: ReadLike>(
+        &mut self,
+        cx: &mut Context<'_>,
+        mut src: R,
+    ) -> Poll<Result<usize, R::Error>> {
         // Just a quick check if the pipe is closed, which is why a relaxed load is okay.
         if self.inner.closed.load(Ordering::Relaxed) {
             return Poll::Ready(Ok(0));
@@ -401,6 +419,36 @@ impl AsyncWrite for Writer {
 
         // The pipe is now closed.
         Poll::Ready(Ok(()))
+    }
+}
+
+/// A trait for reading bytes into a pipe.
+trait ReadLike {
+    type Error;
+
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error>;
+}
+
+impl<R: Read> ReadLike for R {
+    type Error = io::Error;
+
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
+        Read::read(self, buf)
+    }
+}
+
+/// A trait for writing bytes from a pipe.
+trait WriteLike {
+    type Error;
+
+    fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error>;
+}
+
+impl<W: Write> WriteLike for W {
+    type Error = io::Error;
+
+    fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
+        Write::write(self, buf)
     }
 }
 
