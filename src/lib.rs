@@ -102,9 +102,6 @@ pub struct Writer {
     zeroed_until: usize,
 }
 
-unsafe impl Send for Reader {}
-unsafe impl Send for Writer {}
-
 /// The inner ring buffer.
 ///
 /// Head and tail indices are in the range `0..2*cap`, even though they really map onto the
@@ -377,3 +374,11 @@ fn maybe_yield(cx: &mut Context<'_>) -> Poll<()> {
         Poll::Ready(())
     }
 }
+
+/// ```
+/// use piper::{Reader, Writer};
+/// fn _send_sync<T: Send + Sync>() {}
+/// _send_sync::<Reader>();
+/// _send_sync::<Writer>();
+/// ```
+fn _assert_send_sync() {}
