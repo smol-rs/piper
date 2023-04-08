@@ -26,7 +26,7 @@
 //! - [`event-listener`](https://docs.rs/event-listener)
 //!
 //! # Examples
-//! 
+//!
 //! ## Asynchronous Tasks
 //!
 //! Communicate between asynchronous tasks, potentially on other threads.
@@ -87,7 +87,7 @@
 //!         drop(signal);
 //!     }));
 //! ```
-//! 
+//!
 //! ## Blocking I/O
 //!
 //! File I/O is blocking; therefore, in `async` code, you must run it on another thread. This example
@@ -356,7 +356,7 @@ impl Reader {
     ///
     /// This method is only available when the `std` feature is enabled. For `no_std` environments,
     /// consider using [`poll_drain_bytes`] instead.
-    /// 
+    ///
     /// [`poll_drain_bytes`]: #method.poll_drain_bytes
     ///
     /// # Examples
@@ -393,7 +393,7 @@ impl Reader {
     /// Because of this, it is infallible and can be used in `no_std` environments.
     ///
     /// The same conditions that apply to [`poll_drain`] apply to this method.
-    /// 
+    ///
     /// [`poll_drain`]: #method.poll_drain
     ///
     /// # Examples
@@ -541,7 +541,7 @@ impl Writer {
     ///
     /// This method is only available when the `std` feature is enabled. For `no_std` environments,
     /// consider using [`poll_fill_bytes`] instead.
-    /// 
+    ///
     /// [`poll_fill_bytes`]: #method.poll_fill_bytes
     ///
     /// # Examples
@@ -575,7 +575,7 @@ impl Writer {
     /// Because of this, it is infallible and can be used in `no_std` environments.
     ///
     /// The same conditions that apply to [`poll_fill`] apply to this method.
-    /// 
+    ///
     /// [`poll_fill`]: #method.poll_fill
     ///
     /// # Examples
