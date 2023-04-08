@@ -344,7 +344,122 @@ impl Drop for Writer {
     }
 }
 
+impl Pipe {
+    /// Get the length of the data in the pipe.
+    fn len(&self) -> usize {
+        let head = self.head.load(Ordering::Acquire);
+        let tail = self.tail.load(Ordering::Acquire);
+
+        if head <= tail {
+            tail - head
+        } else {
+            (2 * self.cap) - (head - tail)
+        }
+    }
+}
+
 impl Reader {
+    /// Gets the total length of the data in the pipe.
+    ///
+    /// This method returns the number of bytes that have been written into the pipe but haven't been
+    /// read yet.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # futures_lite::future::block_on(async {
+    /// # futures_lite::future::poll_fn(|cx| {
+    /// let (mut reader, mut writer) = piper::pipe(10);
+    /// let _ = writer.poll_fill_bytes(cx, &[0u8; 5]);
+    /// assert_eq!(reader.len(), 5);
+    /// # std::task::Poll::Ready(()) }).await;
+    /// # });
+    /// ```
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Tell whether or not the pipe is empty.
+    ///
+    /// This method returns `true` if the pipe is empty, and `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # futures_lite::future::block_on(async {
+    /// # futures_lite::future::poll_fn(|cx| {
+    /// let (mut reader, mut writer) = piper::pipe(10);
+    /// assert!(reader.is_empty());
+    /// let _ = writer.poll_fill_bytes(cx, &[0u8; 5]);
+    /// assert!(!reader.is_empty());
+    /// # std::task::Poll::Ready(()) }).await;
+    /// # });
+    /// ```
+    pub fn is_empty(&self) -> bool {
+        self.inner.len() == 0
+    }
+
+    /// Gets the total capacity of the pipe.
+    ///
+    /// This method returns the number of bytes that the pipe can hold at a time.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # futures_lite::future::block_on(async {
+    /// let (reader, _) = piper::pipe(10);
+    /// assert_eq!(reader.capacity(), 10);
+    /// # });
+    /// ```
+    pub fn capacity(&self) -> usize {
+        self.inner.cap
+    }
+
+    /// Tell whether or not the pipe is full.
+    ///
+    /// The pipe is full if the number of bytes written into it is equal to its capacity. At this point,
+    /// writes will block until some data is read from the pipe.
+    ///
+    /// This method returns `true` if the pipe is full, and `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # futures_lite::future::block_on(async {
+    /// # futures_lite::future::poll_fn(|cx| {
+    /// let (mut reader, mut writer) = piper::pipe(10);
+    /// assert!(!reader.is_full());
+    /// let _ = writer.poll_fill_bytes(cx, &[0u8; 10]);
+    /// assert!(reader.is_full());
+    /// let _ = reader.poll_drain_bytes(cx, &mut [0u8; 5]);
+    /// assert!(!reader.is_full());
+    /// # std::task::Poll::Ready(()) }).await;
+    /// # });
+    /// ```
+    pub fn is_full(&self) -> bool {
+        self.inner.len() == self.inner.cap
+    }
+
+    /// Tell whether or not the pipe is closed.
+    ///
+    /// The pipe is closed if either the reader or the writer has been dropped. At this point, attempting
+    /// to write into the pipe will return `Poll::Ready(Ok(0))` and attempting to read from the pipe after
+    /// any previously written bytes are read will return `Poll::Ready(Ok(0))`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # futures_lite::future::block_on(async {
+    /// let (mut reader, mut writer) = piper::pipe(10);
+    /// assert!(!reader.is_closed());
+    /// drop(writer);
+    /// assert!(reader.is_closed());
+    /// # });
+    /// ```
+    pub fn is_closed(&self) -> bool {
+        self.inner.closed.load(Ordering::SeqCst)
+    }
+
     /// Reads bytes from this reader and writes into blocking `dest`.
     ///
     /// This method reads directly from the pipe's internal buffer into `dest`. This avoids an extra copy,
@@ -530,6 +645,107 @@ impl AsyncRead for Reader {
 }
 
 impl Writer {
+    /// Gets the total length of the data in the pipe.
+    ///
+    /// This method returns the number of bytes that have been written into the pipe but haven't been
+    /// read yet.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # futures_lite::future::block_on(async {
+    /// # futures_lite::future::poll_fn(|cx| {
+    /// let (_reader, mut writer) = piper::pipe(10);
+    /// let _ = writer.poll_fill_bytes(cx, &[0u8; 5]);
+    /// assert_eq!(writer.len(), 5);
+    /// # std::task::Poll::Ready(()) }).await;
+    /// # });
+    /// ```
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Tell whether or not the pipe is empty.
+    ///
+    /// This method returns `true` if the pipe is empty, and `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # futures_lite::future::block_on(async {
+    /// # futures_lite::future::poll_fn(|cx| {
+    /// let (_reader, mut writer) = piper::pipe(10);
+    /// assert!(writer.is_empty());
+    /// let _ = writer.poll_fill_bytes(cx, &[0u8; 5]);
+    /// assert!(!writer.is_empty());
+    /// # std::task::Poll::Ready(()) }).await;
+    /// # });
+    /// ```
+    pub fn is_empty(&self) -> bool {
+        self.inner.len() == 0
+    }
+
+    /// Gets the total capacity of the pipe.
+    ///
+    /// This method returns the number of bytes that the pipe can hold at a time.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # futures_lite::future::block_on(async {
+    /// let (_, writer) = piper::pipe(10);
+    /// assert_eq!(writer.capacity(), 10);
+    /// # });
+    /// ```
+    pub fn capacity(&self) -> usize {
+        self.inner.cap
+    }
+
+    /// Tell whether or not the pipe is full.
+    ///
+    /// The pipe is full if the number of bytes written into it is equal to its capacity. At this point,
+    /// writes will block until some data is read from the pipe.
+    ///
+    /// This method returns `true` if the pipe is full, and `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # futures_lite::future::block_on(async {
+    /// # futures_lite::future::poll_fn(|cx| {
+    /// let (mut reader, mut writer) = piper::pipe(10);
+    /// assert!(!writer.is_full());
+    /// let _ = writer.poll_fill_bytes(cx, &[0u8; 10]);
+    /// assert!(writer.is_full());
+    /// let _ = reader.poll_drain_bytes(cx, &mut [0u8; 5]);
+    /// assert!(!writer.is_full());
+    /// # std::task::Poll::Ready(()) }).await;
+    /// # });
+    /// ```
+    pub fn is_full(&self) -> bool {
+        self.inner.len() == self.inner.cap
+    }
+
+    /// Tell whether or not the pipe is closed.
+    ///
+    /// The pipe is closed if either the reader or the writer has been dropped. At this point, attempting
+    /// to write into the pipe will return `Poll::Ready(Ok(0))` and attempting to read from the pipe after
+    /// any previously written bytes are read will return `Poll::Ready(Ok(0))`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # futures_lite::future::block_on(async {
+    /// let (reader, writer) = piper::pipe(10);
+    /// assert!(!writer.is_closed());
+    /// drop(reader);
+    /// assert!(writer.is_closed());
+    /// # });
+    /// ```
+    pub fn is_closed(&self) -> bool {
+        self.inner.closed.load(Ordering::SeqCst)
+    }
+
     /// Reads bytes from blocking `src` and writes into this writer.
     ///
     /// This method writes directly from `src` into the pipe's internal buffer. This avoids an extra copy,
