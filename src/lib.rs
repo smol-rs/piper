@@ -499,7 +499,7 @@ impl Reader {
         cx: &mut Context<'_>,
         dest: impl Write,
     ) -> Poll<io::Result<usize>> {
-        self.drain_inner(cx, dest)
+        self.drain_inner(Some(cx), dest)
     }
 
     /// Reads bytes from this reader.
@@ -530,17 +530,44 @@ impl Reader {
     /// # });
     /// ```
     pub fn poll_drain_bytes(&mut self, cx: &mut Context<'_>, dest: &mut [u8]) -> Poll<usize> {
-        match self.drain_inner(cx, WriteBytes(dest)) {
+        match self.drain_inner(Some(cx), WriteBytes(dest)) {
             Poll::Ready(Ok(n)) => Poll::Ready(n),
             Poll::Ready(Err(e)) => match e {},
             Poll::Pending => Poll::Pending,
         }
     }
 
+    /// Tries to read bytes from this reader.
+    ///
+    /// Returns the total number of bytes that were read from this reader.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let (mut r, mut w) = piper::pipe(1024);
+    ///
+    /// // `try_drain()` returns 0 off the bat.
+    /// let mut buf = [0; 10];
+    /// assert_eq!(r.try_drain(&mut buf), 0);
+    ///
+    /// // After a write it returns the data.
+    /// w.try_fill(&[0, 1, 2, 3, 4]);
+    /// assert_eq!(r.try_drain(&mut buf), 5);
+    /// assert_eq!(&buf[..5], &[0, 1, 2, 3, 4]);
+    /// ```
+    pub fn try_drain(&mut self, dest: &mut [u8]) -> usize {
+        match self.drain_inner(None, WriteBytes(dest)) {
+            Poll::Ready(Ok(n)) => n,
+            Poll::Ready(Err(e)) => match e {},
+            Poll::Pending => 0,
+        }
+    }
+
     /// Reads bytes from this reader and writes into blocking `dest`.
+    #[inline]
     fn drain_inner<W: WriteLike>(
         &mut self,
-        cx: &mut Context<'_>,
+        mut cx: Option<&mut Context<'_>>,
         mut dest: W,
     ) -> Poll<Result<usize, W::Error>> {
         let cap = self.inner.cap;
@@ -562,7 +589,9 @@ impl Reader {
             // If the pipe is now really empty...
             if distance(self.head, self.tail) == 0 {
                 // Register the waker.
-                self.inner.reader.register(cx.waker());
+                if let Some(cx) = cx.as_mut() {
+                    self.inner.reader.register(cx.waker());
+                }
                 atomic::fence(Ordering::SeqCst);
 
                 // Reload the tail after registering the waker.
@@ -584,7 +613,9 @@ impl Reader {
         self.inner.reader.take();
 
         // Yield with some small probability - this improves fairness.
-        ready!(maybe_yield(cx));
+        if let Some(cx) = cx {
+            ready!(maybe_yield(cx));
+        }
 
         // Given an index in `0..2*cap`, returns the real index in `0..cap`.
         let real_index = |i: usize| {
@@ -782,7 +813,7 @@ impl Writer {
     /// ```
     #[cfg(feature = "std")]
     pub fn poll_fill(&mut self, cx: &mut Context<'_>, src: impl Read) -> Poll<io::Result<usize>> {
-        self.fill_inner(cx, src)
+        self.fill_inner(Some(cx), src)
     }
 
     /// Writes bytes into this writer.
@@ -815,17 +846,40 @@ impl Writer {
     /// # });
     /// ```
     pub fn poll_fill_bytes(&mut self, cx: &mut Context<'_>, bytes: &[u8]) -> Poll<usize> {
-        match self.fill_inner(cx, ReadBytes(bytes)) {
+        match self.fill_inner(Some(cx), ReadBytes(bytes)) {
             Poll::Ready(Ok(n)) => Poll::Ready(n),
             Poll::Ready(Err(e)) => match e {},
             Poll::Pending => Poll::Pending,
         }
     }
 
+    /// Tries to write bytes to this writer.
+    ///
+    /// Returns the total number of bytes that were read from this reader.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let (mut r, mut w) = piper::pipe(1024);
+    ///
+    /// let mut buf = [0; 10];
+    /// assert_eq!(w.try_fill(&[0, 1, 2, 3, 4]), 5);
+    /// assert_eq!(r.try_drain(&mut buf), 5);
+    /// assert_eq!(&buf[..5], &[0, 1, 2, 3, 4]);
+    /// ```
+    pub fn try_fill(&mut self, dest: &[u8]) -> usize {
+        match self.fill_inner(None, ReadBytes(dest)) {
+            Poll::Ready(Ok(n)) => n,
+            Poll::Ready(Err(e)) => match e {},
+            Poll::Pending => 0,
+        }
+    }
+
     /// Reads bytes from blocking `src` and writes into this writer.
+    #[inline]
     fn fill_inner<R: ReadLike>(
         &mut self,
-        cx: &mut Context<'_>,
+        mut cx: Option<&mut Context<'_>>,
         mut src: R,
     ) -> Poll<Result<usize, R::Error>> {
         // Just a quick check if the pipe is closed, which is why a relaxed load is okay.
@@ -851,7 +905,9 @@ impl Writer {
             // If the pipe is now really empty...
             if distance(self.head, self.tail) == cap {
                 // Register the waker.
-                self.inner.writer.register(cx.waker());
+                if let Some(cx) = cx.as_mut() {
+                    self.inner.writer.register(cx.waker());
+                }
                 atomic::fence(Ordering::SeqCst);
 
                 // Reload the head after registering the waker.
@@ -873,7 +929,9 @@ impl Writer {
         self.inner.writer.take();
 
         // Yield with some small probability - this improves fairness.
-        ready!(maybe_yield(cx));
+        if let Some(cx) = cx {
+            ready!(maybe_yield(cx));
+        }
 
         // Given an index in `0..2*cap`, returns the real index in `0..cap`.
         let real_index = |i: usize| {
