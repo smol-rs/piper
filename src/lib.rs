@@ -38,6 +38,8 @@
 //! use futures_lite::{future, prelude::*};
 //! use std::time::Duration;
 //!
+//! # if cfg!(miri) { return; }
+//!
 //! // Create a pair of handles.
 //! let (mut reader, mut writer) = piper::pipe(1024);
 //!
