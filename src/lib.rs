@@ -38,6 +38,8 @@
 //! use futures_lite::{future, prelude::*};
 //! use std::time::Duration;
 //!
+//! # if cfg!(miri) { return; }
+//!
 //! // Create a pair of handles.
 //! let (mut reader, mut writer) = piper::pipe(1024);
 //!
@@ -226,10 +228,14 @@ pub fn pipe(cap: usize) -> (Reader, Writer) {
         cap,
     });
 
+    // Use a random number generator to randomize fair yielding behavior.
+    let mut rng = rng();
+
     let r = Reader {
         inner: inner.clone(),
         head: 0,
         tail: 0,
+        rng: rng.fork(),
     };
 
     let w = Writer {
@@ -237,6 +243,7 @@ pub fn pipe(cap: usize) -> (Reader, Writer) {
         head: 0,
         tail: 0,
         zeroed_until: 0,
+        rng,
     };
 
     (r, w)
@@ -258,6 +265,9 @@ pub struct Reader {
     ///
     /// This index is a snapshot of `index.tail` that might become stale at any point.
     tail: usize,
+
+    /// Random number generator.
+    rng: fastrand::Rng,
 }
 
 /// The writing side of a pipe.
@@ -283,6 +293,9 @@ pub struct Writer {
     /// uninitialized data to user code. Zeroing the buffer right after allocation would be too
     /// expensive, so we zero it in smaller chunks as the writer makes progress.
     zeroed_until: usize,
+
+    /// Random number generator.
+    rng: fastrand::Rng,
 }
 
 /// The inner ring buffer.
@@ -614,7 +627,7 @@ impl Reader {
 
         // Yield with some small probability - this improves fairness.
         if let Some(cx) = cx {
-            ready!(maybe_yield(cx));
+            ready!(maybe_yield(&mut self.rng, cx));
         }
 
         // Given an index in `0..2*cap`, returns the real index in `0..cap`.
@@ -930,7 +943,7 @@ impl Writer {
 
         // Yield with some small probability - this improves fairness.
         if let Some(cx) = cx {
-            ready!(maybe_yield(cx));
+            ready!(maybe_yield(&mut self.rng, cx));
         }
 
         // Given an index in `0..2*cap`, returns the real index in `0..cap`.
@@ -1094,9 +1107,8 @@ impl WriteLike for WriteBytes<'_> {
 }
 
 /// Yield with some small probability.
-#[cfg(feature = "std")]
-fn maybe_yield(cx: &mut Context<'_>) -> Poll<()> {
-    if fastrand::usize(..100) == 0 {
+fn maybe_yield(rng: &mut fastrand::Rng, cx: &mut Context<'_>) -> Poll<()> {
+    if rng.usize(..100) == 0 {
         cx.waker().wake_by_ref();
         Poll::Pending
     } else {
@@ -1104,11 +1116,21 @@ fn maybe_yield(cx: &mut Context<'_>) -> Poll<()> {
     }
 }
 
-/// Yielding isn't supported yet on no_std.
+/// Get a random number generator.
+#[cfg(feature = "std")]
+#[inline]
+fn rng() -> fastrand::Rng {
+    fastrand::Rng::new()
+}
+
+/// Get a random number generator.
+///
+/// This uses a fixed seed due to the lack of a good RNG in `no_std` environments.
 #[cfg(not(feature = "std"))]
-fn maybe_yield(_cx: &mut Context<'_>) -> Poll<()> {
-    // TODO: Once fastrand works on no_std, use that instead.
-    Poll::Ready(())
+#[inline]
+fn rng() -> fastrand::Rng {
+    // Chosen by fair roll of the dice.
+    fastrand::Rng::with_seed(0x7e9b496634c97ec6)
 }
 
 /// ```
