@@ -167,6 +167,12 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(missing_docs)]
+#![doc(
+    html_favicon_url = "https://raw.githubusercontent.com/smol-rs/smol/master/assets/images/logo_fullsize_transparent.png"
+)]
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/smol-rs/smol/master/assets/images/logo_fullsize_transparent.png"
+)]
 
 extern crate alloc;
 
