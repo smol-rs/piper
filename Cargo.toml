@@ -1,11 +1,11 @@
 [package]
-authors = ["Stjepan Glavina <stjepang@gmail.com>", "John Nunley <jtnunley01@gmail.com>"]
+authors = ["Stjepan Glavina <stjepang@gmail.com>", "John Nunley <dev@notgull.net>"]
 description = "Async pipes, channels, mutexes, and more."
 edition = "2018"
 license = "MIT OR Apache-2.0"
 name = "piper"
 repository = "https://github.com/notgull/piper"
-version = "0.2.0"
+version = "0.2.1"
 rust-version = "1.36"
 
 [features]
