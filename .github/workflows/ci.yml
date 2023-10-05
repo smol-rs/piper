@@ -41,7 +41,7 @@ jobs:
         run: cargo check -Z features=dev_dep
       - run: cargo test --all
       - run: cargo hack build --feature-powerset --no-dev-deps
-      - run: cargo build --no-default-features --target thumbv7m-none-eabi
+      - run: cargo hack build --feature-powerset --no-dev-deps --target thumbv7m-none-eabi --skip std,default
 
   msrv:
     runs-on: ubuntu-latest
