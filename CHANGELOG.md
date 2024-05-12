@@ -1,3 +1,7 @@
+# Version 0.2.2
+
+- Update `portable-atomic-util` to v0.2.0. (#12)
+
 # Version 0.2.1
 
 - Update `fastrand` to v2.0.0. (#2)

@@ -5,7 +5,7 @@ edition = "2018"
 license = "MIT OR Apache-2.0"
 name = "piper"
 repository = "https://github.com/notgull/piper"
-version = "0.2.1"
+version = "0.2.2"
 rust-version = "1.37"
 
 [features]
