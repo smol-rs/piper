@@ -17,7 +17,7 @@ portable-atomic = ["atomic-waker/portable-atomic", "portable_atomic_crate", "por
 atomic-waker = "1.1.0"
 fastrand = { version = "2.0.0", default-features = false }
 futures-io = { version = "0.3.28", optional = true }
-portable-atomic-util = { version = "0.1.2", features = ["alloc"], optional = true }
+portable-atomic-util = { version = "0.2.0", features = ["alloc"], optional = true }
 
 [dependencies.portable_atomic_crate]
 package = "portable-atomic"
