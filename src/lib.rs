@@ -215,6 +215,7 @@ macro_rules! ready {
 /// # Panics
 ///
 /// This function panics if `cap` is 0 or if `cap * 2` overflows a `usize`.
+#[allow(clippy::incompatible_msrv)] // false positive: https://github.com/rust-lang/rust-clippy/issues/12280
 pub fn pipe(cap: usize) -> (Reader, Writer) {
     assert!(cap > 0, "capacity must be positive");
     assert!(cap.checked_mul(2).is_some(), "capacity is too large");
