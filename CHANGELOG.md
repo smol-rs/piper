@@ -1,3 +1,8 @@
+# Version 0.2.3
+
+- Relax MSRV to v1.36. (#15)
+- Fix the repository URL in Cargo.toml. (#16)
+
 # Version 0.2.2
 
 - Update `portable-atomic-util` to v0.2.0. (#12)
