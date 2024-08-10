@@ -1,3 +1,7 @@
+# Version 0.2.4
+
+- Update doctests to be more reliable. (#19)
+
 # Version 0.2.3
 
 - Relax MSRV to v1.36. (#15)
