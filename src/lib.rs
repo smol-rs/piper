@@ -387,13 +387,9 @@ impl Reader {
     /// # Examples
     ///
     /// ```
-    /// # futures_lite::future::block_on(async {
-    /// # futures_lite::future::poll_fn(|cx| {
     /// let (mut reader, mut writer) = piper::pipe(10);
-    /// let _ = writer.poll_fill_bytes(cx, &[0u8; 5]);
+    /// let _ = writer.try_fill(&[0u8; 5]);
     /// assert_eq!(reader.len(), 5);
-    /// # std::task::Poll::Ready(()) }).await;
-    /// # });
     /// ```
     pub fn len(&self) -> usize {
         self.inner.len()
@@ -406,14 +402,10 @@ impl Reader {
     /// # Examples
     ///
     /// ```
-    /// # futures_lite::future::block_on(async {
-    /// # futures_lite::future::poll_fn(|cx| {
     /// let (mut reader, mut writer) = piper::pipe(10);
     /// assert!(reader.is_empty());
-    /// let _ = writer.poll_fill_bytes(cx, &[0u8; 5]);
+    /// let _ = writer.try_fill(&[0u8; 5]);
     /// assert!(!reader.is_empty());
-    /// # std::task::Poll::Ready(()) }).await;
-    /// # });
     /// ```
     pub fn is_empty(&self) -> bool {
         self.inner.len() == 0
@@ -445,16 +437,12 @@ impl Reader {
     /// # Examples
     ///
     /// ```
-    /// # futures_lite::future::block_on(async {
-    /// # futures_lite::future::poll_fn(|cx| {
     /// let (mut reader, mut writer) = piper::pipe(10);
     /// assert!(!reader.is_full());
-    /// let _ = writer.poll_fill_bytes(cx, &[0u8; 10]);
+    /// let _ = writer.try_fill(&[0u8; 10]);
     /// assert!(reader.is_full());
-    /// let _ = reader.poll_drain_bytes(cx, &mut [0u8; 5]);
+    /// let _ = reader.try_drain(&mut [0u8; 5]);
     /// assert!(!reader.is_full());
-    /// # std::task::Poll::Ready(()) }).await;
-    /// # });
     /// ```
     pub fn is_full(&self) -> bool {
         self.inner.len() == self.inner.cap
@@ -704,13 +692,9 @@ impl Writer {
     /// # Examples
     ///
     /// ```
-    /// # futures_lite::future::block_on(async {
-    /// # futures_lite::future::poll_fn(|cx| {
     /// let (_reader, mut writer) = piper::pipe(10);
-    /// let _ = writer.poll_fill_bytes(cx, &[0u8; 5]);
+    /// let _ = writer.try_fill(&[0u8; 5]);
     /// assert_eq!(writer.len(), 5);
-    /// # std::task::Poll::Ready(()) }).await;
-    /// # });
     /// ```
     pub fn len(&self) -> usize {
         self.inner.len()
@@ -723,14 +707,10 @@ impl Writer {
     /// # Examples
     ///
     /// ```
-    /// # futures_lite::future::block_on(async {
-    /// # futures_lite::future::poll_fn(|cx| {
     /// let (_reader, mut writer) = piper::pipe(10);
     /// assert!(writer.is_empty());
-    /// let _ = writer.poll_fill_bytes(cx, &[0u8; 5]);
+    /// let _ = writer.try_fill(&[0u8; 5]);
     /// assert!(!writer.is_empty());
-    /// # std::task::Poll::Ready(()) }).await;
-    /// # });
     /// ```
     pub fn is_empty(&self) -> bool {
         self.inner.len() == 0
@@ -762,16 +742,12 @@ impl Writer {
     /// # Examples
     ///
     /// ```
-    /// # futures_lite::future::block_on(async {
-    /// # futures_lite::future::poll_fn(|cx| {
     /// let (mut reader, mut writer) = piper::pipe(10);
     /// assert!(!writer.is_full());
-    /// let _ = writer.poll_fill_bytes(cx, &[0u8; 10]);
+    /// let _ = writer.try_fill(&[0u8; 10]);
     /// assert!(writer.is_full());
-    /// let _ = reader.poll_drain_bytes(cx, &mut [0u8; 5]);
+    /// let _ = reader.try_drain(&mut [0u8; 5]);
     /// assert!(!writer.is_full());
-    /// # std::task::Poll::Ready(()) }).await;
-    /// # });
     /// ```
     pub fn is_full(&self) -> bool {
         self.inner.len() == self.inner.cap
