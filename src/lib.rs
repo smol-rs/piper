@@ -11,7 +11,7 @@
 //! When the sender is dropped, remaining bytes in the pipe can still be read. After that, attempts
 //! to read will result in `Ok(0)`, i.e. they will always 'successfully' read 0 bytes.
 //!
-//! When the receiver is dropped, the pipe is closed and no more bytes and be written into it.
+//! When the receiver is dropped, the pipe is closed and no more bytes can be written into it.
 //! Further writes will result in `Ok(0)`, i.e. they will always 'successfully' write 0 bytes.
 //!
 //! # Version 0.2.0 Notes
