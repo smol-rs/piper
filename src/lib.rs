@@ -195,7 +195,7 @@ use std::{
 use atomic_waker::AtomicWaker;
 
 #[cfg(feature = "std")]
-use futures_io::{AsyncRead, AsyncWrite};
+use futures_io::{AsyncBufRead, AsyncRead, AsyncWrite};
 
 macro_rules! ready {
     ($e:expr) => {{
@@ -555,6 +555,86 @@ impl Reader {
         }
     }
 
+    /// Poll for data to become available in the pipe or the write side to be closed.
+    ///
+    /// Returns `Poll::Ready(true)` when data is ready. Call `peek_buf()` to access the
+    /// data, and `consume()` to advance the read position.
+    ///
+    /// A return value of `Poll::Ready(false)` indicates that the pipe is closed.
+    ///
+    /// If no data is available, this method will return `Poll::Pending` and register the waker
+    /// to receive a notification when data is written to the pipe or the write end is closed.
+    ///
+    /// Unlike `AsyncBufRead::poll_fill_buf` method, this method is infallible and does not
+    /// require the `std` feature. It separates the polling, buffer access, and consume steps
+    /// for compatibility with `poll_fn`'s lifetime requirements.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use futures_lite::{future, prelude::*};
+    ///
+    /// # future::block_on(async {
+    /// let (mut r, mut w) = piper::pipe(1024);
+    ///
+    /// // Write some data to the pipe.
+    /// w.write_all(b"hello world").await.unwrap();
+    ///
+    /// future::poll_fn(|cx| r.poll(cx)).await;
+    /// let buf = r.peek_buf();
+    /// assert_eq!(buf, &b"hello world"[..buf.len()]);
+    ///
+    /// // Consume one byte
+    /// r.consume(1);
+    ///
+    /// future::poll_fn(|cx| r.poll(cx)).await;
+    /// let buf = r.peek_buf();
+    /// assert_eq!(buf, &b"ello world"[..buf.len()]);
+    ///
+    /// r.consume(buf.len());
+    /// # });
+    /// ```
+    pub fn poll(&mut self, cx: &mut Context<'_>) -> Poll<bool> {
+        self.poll_available(Some(cx))
+    }
+
+    /// Return the contents of the internal buffer that are available immediately.
+    ///
+    /// Call [`Self::consume()`] to consume the bytes returned by this method. The buffer might
+    /// not re-fill until another call to [`Self::poll()`] returns `Poll::Ready`.
+    pub fn peek_buf(&self) -> &[u8] {
+        let n = self
+            .available_data() // No more than bytes in the pipe.
+            .min(self.inner.cap - self.inner.real_index(self.head)); // Don't go past the buffer boundary.
+
+        unsafe { slice::from_raw_parts(self.inner.buffer.add(self.inner.real_index(self.head)), n) }
+    }
+
+    /// Consume `amt` bytes from the pipe.
+    ///
+    /// Panics if `amt` is greater than the length of the buffer returned by [`Self::peek_buf()`].
+    pub fn consume(&mut self, amt: usize) {
+        let cap = self.inner.cap;
+
+        assert!(
+            amt <= self.available_data() && self.head + amt <= 2 * cap,
+            "cannot consume more bytes than available in the pipe"
+        );
+
+        // Move the head forward.
+        if self.head + amt < 2 * cap {
+            self.head += amt;
+        } else {
+            self.head = 0;
+        }
+
+        // Store the current head index.
+        self.inner.head.store(self.head, Ordering::Release);
+
+        // Wake the writer because the pipe is not full.
+        self.inner.writer.wake();
+    }
+
     /// Tries to read bytes from this reader.
     ///
     /// Returns the total number of bytes that were read from this reader.
@@ -593,15 +673,11 @@ impl Reader {
         }
     }
 
-    /// Reads bytes from this reader and writes into blocking `dest`.
-    #[inline]
-    fn drain_inner<W: WriteLike>(
-        &mut self,
-        mut cx: Option<&mut Context<'_>>,
-        mut dest: W,
-    ) -> Poll<Result<usize, W::Error>> {
-        let cap = self.inner.cap;
-
+    /// Poll for available data or end of stream.
+    ///
+    /// Returns `Poll::Ready(true)` if data is available, `Poll::Ready(false)` if the pipe is closed,
+    /// or `Poll::Pending` if the pipe is empty and the waker has been registered.
+    fn poll_available(&mut self, mut cx: Option<&mut Context<'_>>) -> Poll<bool> {
         // If the pipe appears to be empty...
         if self.available_data() == 0 {
             // Reload the tail in case it's become stale.
@@ -622,7 +698,7 @@ impl Reader {
                 if self.available_data() == 0 {
                     // Check whether the pipe is closed or just empty.
                     if self.inner.closed.load(Ordering::Relaxed) {
-                        return Poll::Ready(Ok(0));
+                        return Poll::Ready(false);
                     } else {
                         return Poll::Pending;
                     }
@@ -632,6 +708,20 @@ impl Reader {
 
         // The pipe is not empty so remove the waker.
         self.inner.reader.take();
+        Poll::Ready(true)
+    }
+
+    /// Reads bytes from this reader and writes into blocking `dest`.
+    #[inline]
+    fn drain_inner<W: WriteLike>(
+        &mut self,
+        mut cx: Option<&mut Context<'_>>,
+        mut dest: W,
+    ) -> Poll<Result<usize, W::Error>> {
+        if ready!(self.poll_available(cx.as_deref_mut())) == false {
+            // The pipe is closed
+            return Poll::Ready(Ok(0));
+        }
 
         // Yield with some small probability - this improves fairness.
         if let Some(cx) = cx {
@@ -642,15 +732,11 @@ impl Reader {
         let mut count = 0;
 
         loop {
-            // Calculate how many bytes to read in this iteration.
-            let n = (128 * 1024) // Not too many bytes in one go - better to wake the writer soon!
-                .min(self.available_data()) // No more than bytes in the pipe.
-                .min(cap - self.inner.real_index(self.head)); // Don't go past the buffer boundary.
-
             // Create a slice of data in the pipe buffer.
-            let pipe_slice = unsafe {
-                slice::from_raw_parts(self.inner.buffer.add(self.inner.real_index(self.head)), n)
-            };
+            let pipe_slice = self.peek_buf();
+
+            // Not too many bytes in one go - better to wake the writer soon!
+            let pipe_slice = &pipe_slice[..pipe_slice.len().min(128 * 1024)];
 
             // Copy bytes from the pipe buffer into `dest`.
             let n = dest.write(pipe_slice)?;
@@ -661,18 +747,7 @@ impl Reader {
                 return Poll::Ready(Ok(count));
             }
 
-            // Move the head forward.
-            if self.head + n < 2 * cap {
-                self.head += n;
-            } else {
-                self.head = 0;
-            }
-
-            // Store the current head index.
-            self.inner.head.store(self.head, Ordering::Release);
-
-            // Wake the writer because the pipe is not full.
-            self.inner.writer.wake();
+            self.consume(n);
         }
     }
 }
@@ -685,6 +760,18 @@ impl AsyncRead for Reader {
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
         self.poll_drain_bytes(cx, buf).map(Ok)
+    }
+}
+
+#[cfg(feature = "std")]
+impl AsyncBufRead for Reader {
+    fn poll_fill_buf(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<&[u8]>> {
+        ready!(self.poll(cx));
+        Poll::Ready(Ok(Pin::into_inner(self).peek_buf()))
+    }
+
+    fn consume(self: Pin<&mut Self>, amt: usize) {
+        Pin::into_inner(self).consume(amt)
     }
 }
 
