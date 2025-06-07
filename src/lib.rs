@@ -376,6 +376,16 @@ impl Pipe {
             (2 * self.cap) - (head - tail)
         }
     }
+
+    /// Given an index in `0..2*cap`, returns the real index in `0..cap`.
+    #[inline]
+    fn real_index(&self, i: usize) -> usize {
+        if i < self.cap {
+            i
+        } else {
+            i - self.cap
+        }
+    }
 }
 
 impl Reader {
@@ -571,6 +581,18 @@ impl Reader {
         }
     }
 
+    /// Get the number of bytes available to read without synchronization.
+    #[inline]
+    fn available_data(&self) -> usize {
+        let a = self.head;
+        let b = self.tail;
+        if a <= b {
+            b - a
+        } else {
+            2 * self.inner.cap - (a - b)
+        }
+    }
+
     /// Reads bytes from this reader and writes into blocking `dest`.
     #[inline]
     fn drain_inner<W: WriteLike>(
@@ -580,22 +602,13 @@ impl Reader {
     ) -> Poll<Result<usize, W::Error>> {
         let cap = self.inner.cap;
 
-        // Calculates the distance between two indices.
-        let distance = |a: usize, b: usize| {
-            if a <= b {
-                b - a
-            } else {
-                2 * cap - (a - b)
-            }
-        };
-
         // If the pipe appears to be empty...
-        if distance(self.head, self.tail) == 0 {
+        if self.available_data() == 0 {
             // Reload the tail in case it's become stale.
             self.tail = self.inner.tail.load(Ordering::Acquire);
 
             // If the pipe is now really empty...
-            if distance(self.head, self.tail) == 0 {
+            if self.available_data() == 0 {
                 // Register the waker.
                 if let Some(cx) = cx.as_mut() {
                     self.inner.reader.register(cx.waker());
@@ -606,7 +619,7 @@ impl Reader {
                 self.tail = self.inner.tail.load(Ordering::Acquire);
 
                 // If the pipe is still empty...
-                if distance(self.head, self.tail) == 0 {
+                if self.available_data() == 0 {
                     // Check whether the pipe is closed or just empty.
                     if self.inner.closed.load(Ordering::Relaxed) {
                         return Poll::Ready(Ok(0));
@@ -625,27 +638,19 @@ impl Reader {
             ready!(maybe_yield(&mut self.rng, cx));
         }
 
-        // Given an index in `0..2*cap`, returns the real index in `0..cap`.
-        let real_index = |i: usize| {
-            if i < cap {
-                i
-            } else {
-                i - cap
-            }
-        };
-
         // Number of bytes read so far.
         let mut count = 0;
 
         loop {
             // Calculate how many bytes to read in this iteration.
             let n = (128 * 1024) // Not too many bytes in one go - better to wake the writer soon!
-                .min(distance(self.head, self.tail)) // No more than bytes in the pipe.
-                .min(cap - real_index(self.head)); // Don't go past the buffer boundary.
+                .min(self.available_data()) // No more than bytes in the pipe.
+                .min(cap - self.inner.real_index(self.head)); // Don't go past the buffer boundary.
 
             // Create a slice of data in the pipe buffer.
-            let pipe_slice =
-                unsafe { slice::from_raw_parts(self.inner.buffer.add(real_index(self.head)), n) };
+            let pipe_slice = unsafe {
+                slice::from_raw_parts(self.inner.buffer.add(self.inner.real_index(self.head)), n)
+            };
 
             // Copy bytes from the pipe buffer into `dest`.
             let n = dest.write(pipe_slice)?;
@@ -871,6 +876,18 @@ impl Writer {
         }
     }
 
+    /// Get the free space in bytes that can be written without synchronization.
+    #[inline]
+    fn available_space(&self) -> usize {
+        let a = self.head;
+        let b = self.tail;
+        if a <= b {
+            self.inner.cap - (b - a)
+        } else {
+            (a - b) - self.inner.cap
+        }
+    }
+
     /// Reads bytes from blocking `src` and writes into this writer.
     #[inline]
     fn fill_inner<R: ReadLike>(
@@ -883,23 +900,15 @@ impl Writer {
             return Poll::Ready(Ok(0));
         }
 
-        // Calculates the distance between two indices.
         let cap = self.inner.cap;
-        let distance = |a: usize, b: usize| {
-            if a <= b {
-                b - a
-            } else {
-                2 * cap - (a - b)
-            }
-        };
 
         // If the pipe appears to be full...
-        if distance(self.head, self.tail) == cap {
+        if self.available_space() == 0 {
             // Reload the head in case it's become stale.
             self.head = self.inner.head.load(Ordering::Acquire);
 
-            // If the pipe is now really empty...
-            if distance(self.head, self.tail) == cap {
+            // If the pipe is now really still full...
+            if self.available_space() == 0 {
                 // Register the waker.
                 if let Some(cx) = cx.as_mut() {
                     self.inner.writer.register(cx.waker());
@@ -910,7 +919,7 @@ impl Writer {
                 self.head = self.inner.head.load(Ordering::Acquire);
 
                 // If the pipe is still full...
-                if distance(self.head, self.tail) == cap {
+                if self.available_space() == 0 {
                     // Check whether the pipe is closed or just full.
                     if self.inner.closed.load(Ordering::Relaxed) {
                         return Poll::Ready(Ok(0));
@@ -929,15 +938,6 @@ impl Writer {
             ready!(maybe_yield(&mut self.rng, cx));
         }
 
-        // Given an index in `0..2*cap`, returns the real index in `0..cap`.
-        let real_index = |i: usize| {
-            if i < cap {
-                i
-            } else {
-                i - cap
-            }
-        };
-
         // Number of bytes written so far.
         let mut count = 0;
 
@@ -945,12 +945,12 @@ impl Writer {
             // Calculate how many bytes to write in this iteration.
             let n = (128 * 1024) // Not too many bytes in one go - better to wake the reader soon!
                 .min(self.zeroed_until * 2 + 4096) // Don't zero too many bytes when starting.
-                .min(cap - distance(self.head, self.tail)) // No more than space in the pipe.
-                .min(cap - real_index(self.tail)); // Don't go past the buffer boundary.
+                .min(self.available_space()) // No more than space in the pipe.
+                .min(cap - self.inner.real_index(self.tail)); // Don't go past the buffer boundary.
 
             // Create a slice of available space in the pipe buffer.
             let pipe_slice_mut = unsafe {
-                let from = real_index(self.tail);
+                let from = self.inner.real_index(self.tail);
                 let to = from + n;
 
                 // Make sure all bytes in the slice are initialized.
