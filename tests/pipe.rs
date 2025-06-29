@@ -84,6 +84,13 @@ fn excessive_consume() {
     r.consume(1);
 }
 
+#[test]
+#[should_panic]
+fn excessive_produced() {
+    let (_, mut w) = pipe(8);
+    w.produced(9);
+}
+
 #[should_panic]
 #[test]
 fn zero_cap_pipe() {

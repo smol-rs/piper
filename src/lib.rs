@@ -975,19 +975,15 @@ impl Writer {
         }
     }
 
-    /// Reads bytes from blocking `src` and writes into this writer.
+    /// Wait for available space in the pipe or the read side to be closed.
+    ///
+    /// Returns `Poll::Ready(true)` when space is available, or `Poll::Ready(false)` if the pipe is closed.
     #[inline]
-    fn fill_inner<R: ReadLike>(
-        &mut self,
-        mut cx: Option<&mut Context<'_>>,
-        mut src: R,
-    ) -> Poll<Result<usize, R::Error>> {
+    fn poll_inner(&mut self, cx: Option<&mut Context<'_>>) -> Poll<bool> {
         // Just a quick check if the pipe is closed, which is why a relaxed load is okay.
         if self.inner.closed.load(Ordering::Relaxed) {
-            return Poll::Ready(Ok(0));
+            return Poll::Ready(false);
         }
-
-        let cap = self.inner.cap;
 
         // If the pipe appears to be full...
         if self.available_space() == 0 {
@@ -997,7 +993,7 @@ impl Writer {
             // If the pipe is now really still full...
             if self.available_space() == 0 {
                 // Register the waker.
-                if let Some(cx) = cx.as_mut() {
+                if let Some(cx) = cx {
                     self.inner.writer.register(cx.waker());
                 }
                 atomic::fence(Ordering::SeqCst);
@@ -1009,7 +1005,7 @@ impl Writer {
                 if self.available_space() == 0 {
                     // Check whether the pipe is closed or just full.
                     if self.inner.closed.load(Ordering::Relaxed) {
-                        return Poll::Ready(Ok(0));
+                        return Poll::Ready(false);
                     } else {
                         return Poll::Pending;
                     }
@@ -1020,6 +1016,63 @@ impl Writer {
         // The pipe is not full so remove the waker.
         self.inner.writer.take();
 
+        Poll::Ready(true)
+    }
+
+    /// Poll for available space in the pipe or the read side to be closed.
+    ///
+    /// Returns `Poll::Ready(true)` when space is available to write. Call
+    /// `write_buf()` to obtain a mutable slice of the buffer to write into,
+    /// then call [`produced(n)`] once the data is written.
+    ///
+    /// A return value of `Poll::Ready(false)` indicates that the pipe is
+    /// closed.
+    ///
+    /// If no space is available, this method will return `Poll::Pending` and
+    /// register the waker to receive a notification when space becomes
+    /// available or the read end is closed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use futures_lite::{future, prelude::*};
+    ///
+    /// # future::block_on(async {
+    /// let (mut r, mut w) = piper::pipe(1024);
+    ///
+    /// future::poll_fn(|cx| w.poll(cx)).await;
+    /// let data = b"hello world";
+    /// let mut remaining = &data[..];
+    ///
+    /// while !remaining.is_empty() {
+    ///     let buf = w.write_buf(remaining.len());
+    ///     let n = buf.len();
+    ///     buf[..n].copy_from_slice(&remaining[..n]);
+    ///     w.produced(n);
+    ///     remaining = &remaining[n..];
+    /// }
+    ///
+    /// // Read the bytes back.
+    /// let mut buf = [0; 64];
+    /// r.read_exact(&mut buf[..data.len()]).await.unwrap();
+    /// assert_eq!(&buf[..data.len()], b"hello world");
+    /// # });
+    /// ```
+    pub fn poll(&mut self, cx: &mut Context<'_>) -> Poll<bool> {
+        self.poll_inner(Some(cx))
+    }
+
+    /// Reads bytes from blocking `src` and writes into this writer.
+    #[inline]
+    fn fill_inner<R: ReadLike>(
+        &mut self,
+        mut cx: Option<&mut Context<'_>>,
+        mut src: R,
+    ) -> Poll<Result<usize, R::Error>> {
+        if ready!(self.poll_inner(cx.as_deref_mut())) == false {
+            return Poll::Ready(Ok(0));
+        }
+
         // Yield with some small probability - this improves fairness.
         if let Some(cx) = cx {
             ready!(maybe_yield(&mut self.rng, cx));
@@ -1029,28 +1082,8 @@ impl Writer {
         let mut count = 0;
 
         loop {
-            // Calculate how many bytes to write in this iteration.
-            let n = (128 * 1024) // Not too many bytes in one go - better to wake the reader soon!
-                .min(self.zeroed_until * 2 + 4096) // Don't zero too many bytes when starting.
-                .min(self.available_space()) // No more than space in the pipe.
-                .min(cap - self.inner.real_index(self.tail)); // Don't go past the buffer boundary.
-
-            // Create a slice of available space in the pipe buffer.
-            let pipe_slice_mut = unsafe {
-                let from = self.inner.real_index(self.tail);
-                let to = from + n;
-
-                // Make sure all bytes in the slice are initialized.
-                if self.zeroed_until < to {
-                    self.inner
-                        .buffer
-                        .add(self.zeroed_until)
-                        .write_bytes(0u8, to - self.zeroed_until);
-                    self.zeroed_until = to;
-                }
-
-                slice::from_raw_parts_mut(self.inner.buffer.add(from), n)
-            };
+            // Not too many bytes in one go - better to wake the reader soon!
+            let pipe_slice_mut = self.write_buf(128 * 1024);
 
             // Copy bytes from `src` into the piper buffer.
             let n = src.read(pipe_slice_mut)?;
@@ -1061,19 +1094,70 @@ impl Writer {
                 return Poll::Ready(Ok(count));
             }
 
-            // Move the tail forward.
-            if self.tail + n < 2 * cap {
-                self.tail += n;
-            } else {
-                self.tail = 0;
+            self.produced(n);
+        }
+    }
+
+    /// Get a mutable slice of the pipe's internal buffer that can be written to.
+    ///
+    /// The contents of the slice are initialized but unspecified and you should
+    /// not read from it or assume its contents are zeroed.
+    ///
+    /// The `max` parameter is an upper bound on the size of the slice returned,
+    /// limiting the number of bytes that will be initialized when using the
+    /// buffer for the first time.
+    ///
+    /// After writing to the buffer, you should call [`produced(n)`] to notify the
+    /// pipe that `n` bytes have been written to the buffer and make them available
+    /// to the reader.
+    pub fn write_buf(&mut self, max: usize) -> &mut [u8] {
+        let n = max
+            .min(self.zeroed_until * 2 + 4096) // Don't zero too many bytes when starting.
+            .min(self.available_space()) // No more than space in the pipe.
+            .min(self.inner.cap - self.inner.real_index(self.tail)); // Don't go past the buffer boundary.
+
+        // Create a slice of available space in the pipe buffer.
+        unsafe {
+            let from = self.inner.real_index(self.tail);
+            let to = from + n;
+
+            // Make sure all bytes in the slice are initialized.
+            if self.zeroed_until < to {
+                self.inner
+                    .buffer
+                    .add(self.zeroed_until)
+                    .write_bytes(0u8, to - self.zeroed_until);
+                self.zeroed_until = to;
             }
 
-            // Store the current tail index.
-            self.inner.tail.store(self.tail, Ordering::Release);
-
-            // Wake the reader because the pipe is not empty.
-            self.inner.reader.wake();
+            slice::from_raw_parts_mut(self.inner.buffer.add(from), n)
         }
+    }
+
+    /// Notify the pipe that `n` bytes have been written to the buffer returned by `write_buf()`.
+    ///
+    /// ## Panics
+    ///   * if `n` is greater than the size of the buffer returned by `write_buf()`.
+    pub fn produced(&mut self, n: usize) {
+        assert!(
+            n <= self.available_space()
+                && (self.zeroed_until == self.inner.cap || self.tail + n <= self.zeroed_until)
+                && self.tail + n <= 2 * self.inner.cap,
+            "cannot write more bytes than available space"
+        );
+
+        // Move the tail forward.
+        if self.tail + n < 2 * self.inner.cap {
+            self.tail += n;
+        } else {
+            self.tail = 0;
+        }
+
+        // Store the current tail index.
+        self.inner.tail.store(self.tail, Ordering::Release);
+
+        // Wake the reader because the pipe is not empty.
+        self.inner.reader.wake();
     }
 }
 
