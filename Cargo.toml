@@ -1,6 +1,6 @@
 [package]
 authors = ["Stjepan Glavina <stjepang@gmail.com>", "John Nunley <dev@notgull.net>"]
-description = "Async pipes, channels, mutexes, and more."
+description = "An asynchronous single-consumer single-producer pipe for bytes."
 edition = "2018"
 license = "MIT OR Apache-2.0"
 name = "piper"
