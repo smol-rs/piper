@@ -29,7 +29,7 @@ optional = true
 async-channel = "2.0.0"
 async-executor = "1.5.1"
 async-io = "2.0.0"
-criterion = { version = "0.4.0", default-features = false, features = ["cargo_bench_support"] }
+criterion = { version = "0.6", default-features = false, features = ["cargo_bench_support"] }
 easy-parallel = "3.2.0"
 futures-lite = "2.0.0"
 
