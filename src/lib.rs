@@ -557,8 +557,9 @@ impl Reader {
 
     /// Poll for data to become available in the pipe or the write side to be closed.
     ///
-    /// Returns `Poll::Ready(true)` when data is ready. Call `peek_buf()` to access the
-    /// data, and `consume()` to advance the read position.
+    /// Returns `Poll::Ready(true)` when data is ready. Call
+    /// [`peek_buf()`][Self::peek_buf] to access the data, and
+    /// [`consume()`][Self::consume] to advance the read position.
     ///
     /// A return value of `Poll::Ready(false)` indicates that the pipe is closed.
     ///
@@ -569,7 +570,7 @@ impl Reader {
     /// require the `std` feature. It separates the polling, buffer access, and consume steps
     /// for compatibility with `poll_fn`'s lifetime requirements.
     ///
-    /// # Examples
+    /// # Example
     ///
     /// ```
     /// use futures_lite::{future, prelude::*};
@@ -1022,8 +1023,9 @@ impl Writer {
     /// Poll for available space in the pipe or the read side to be closed.
     ///
     /// Returns `Poll::Ready(true)` when space is available to write. Call
-    /// `write_buf()` to obtain a mutable slice of the buffer to write into,
-    /// then call [`produced(n)`] once the data is written.
+    /// [`write_buf()`][Self::write_buf] to obtain a mutable slice of the buffer
+    /// to write into, then call [`produced(n)`][Self::produced] once the data
+    /// is written.
     ///
     /// A return value of `Poll::Ready(false)` indicates that the pipe is
     /// closed.
@@ -1032,7 +1034,7 @@ impl Writer {
     /// register the waker to receive a notification when space becomes
     /// available or the read end is closed.
     ///
-    /// # Examples
+    /// # Example
     ///
     /// ```
     /// use futures_lite::{future, prelude::*};
