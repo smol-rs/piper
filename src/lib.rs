@@ -719,7 +719,7 @@ impl Reader {
         mut cx: Option<&mut Context<'_>>,
         mut dest: W,
     ) -> Poll<Result<usize, W::Error>> {
-        if ready!(self.poll_available(cx.as_deref_mut())) == false {
+        if !ready!(self.poll_available(cx.as_mut().map(|c| &mut **c))) {
             // The pipe is closed
             return Poll::Ready(Ok(0));
         }
@@ -768,11 +768,13 @@ impl AsyncRead for Reader {
 impl AsyncBufRead for Reader {
     fn poll_fill_buf(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<&[u8]>> {
         ready!(self.poll(cx));
-        Poll::Ready(Ok(Pin::into_inner(self).peek_buf()))
+        // SAFETY: Reader is `Unpin` (equivalent to the safe `Pin::into_inner` but it needs a higher MSRV)
+        let this = unsafe { self.get_unchecked_mut() };
+        Poll::Ready(Ok(this.peek_buf()))
     }
 
-    fn consume(self: Pin<&mut Self>, amt: usize) {
-        Pin::into_inner(self).consume(amt)
+    fn consume(mut self: Pin<&mut Self>, amt: usize) {
+        (*self).consume(amt)
     }
 }
 
@@ -1071,7 +1073,7 @@ impl Writer {
         mut cx: Option<&mut Context<'_>>,
         mut src: R,
     ) -> Poll<Result<usize, R::Error>> {
-        if ready!(self.poll_inner(cx.as_deref_mut())) == false {
+        if !ready!(self.poll_inner(cx.as_mut().map(|c| &mut **c))) {
             return Poll::Ready(Ok(0));
         }
 
