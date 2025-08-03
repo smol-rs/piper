@@ -48,6 +48,49 @@ fn read() {
         .run();
 }
 
+#[test]
+fn buf_read() {
+    use futures_lite::io::AsyncBufReadExt;
+    let (mut r, mut w) = pipe(8);
+    let ms = Duration::from_micros;
+
+    Parallel::new()
+        .add(move || {
+            let mut line = String::new();
+            future::block_on(r.read_line(&mut line)).unwrap();
+            assert_eq!(line, "hello world\n");
+            line.clear();
+
+            future::block_on(r.read_line(&mut line)).unwrap();
+            assert_eq!(line, "line2\n");
+            line.clear();
+
+            future::block_on(r.read_line(&mut line)).unwrap();
+            assert_eq!(line, "line3");
+        })
+        .add(move || {
+            sleep(ms(500));
+            future::block_on(w.write_all(b"hello world\nline2\n")).unwrap();
+            sleep(ms(100));
+            future::block_on(w.write_all(b"line3")).unwrap();
+        })
+        .run();
+}
+
+#[test]
+#[should_panic]
+fn excessive_consume() {
+    let (mut r, _) = pipe(8);
+    r.consume(1);
+}
+
+#[test]
+#[should_panic]
+fn excessive_produced() {
+    let (_, mut w) = pipe(8);
+    w.produced(9);
+}
+
 #[should_panic]
 #[test]
 fn zero_cap_pipe() {
