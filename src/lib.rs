@@ -692,13 +692,17 @@ impl Reader {
                 }
                 atomic::fence(Ordering::SeqCst);
 
+                // Load whether the channel is closed or not early, so that we don't miss any writes
+                // between updating the tail and checking for close.
+                let is_closed = self.inner.closed.load(Ordering::Relaxed);
+
                 // Reload the tail after registering the waker.
                 self.tail = self.inner.tail.load(Ordering::Acquire);
 
                 // If the pipe is still empty...
                 if self.available_data() == 0 {
                     // Check whether the pipe is closed or just empty.
-                    if self.inner.closed.load(Ordering::Relaxed) {
+                    if is_closed {
                         return Poll::Ready(false);
                     } else {
                         return Poll::Pending;
