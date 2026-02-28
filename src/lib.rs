@@ -694,7 +694,7 @@ impl Reader {
 
                 // Load whether the channel is closed or not early, so that we don't miss any writes
                 // between updating the tail and checking for close.
-                let is_closed = self.inner.closed.load(Ordering::Relaxed);
+                let is_closed = self.inner.closed.load(Ordering::Acquire);
 
                 // Reload the tail after registering the waker.
                 self.tail = self.inner.tail.load(Ordering::Acquire);
