@@ -1,7 +1,11 @@
 use easy_parallel::Parallel;
-use futures_lite::{future, prelude::*};
+use futures_lite::{
+    future::{self, block_on},
+    AsyncReadExt, AsyncWriteExt,
+};
 use piper::pipe;
 
+use std::future::poll_fn;
 use std::task::{Context, Poll};
 use std::thread::sleep;
 use std::time::Duration;
@@ -199,4 +203,27 @@ fn len() {
 fn with_cx<R, F: FnOnce(&mut Context<'_>) -> R>(f: F) -> R {
     let mut f = Some(f);
     future::block_on(future::poll_fn(|cx| Poll::Ready((f.take().unwrap())(cx))))
+}
+
+#[test]
+fn dropping_writer_does_not_lose_writes() {
+    let (mut r, mut w) = pipe(20);
+
+    const TEXT: &str = "hello world";
+    Parallel::new()
+        .add(move || {
+            block_on(async {
+                let mut bytes = Vec::with_capacity(20);
+                // Keep draining until we're out of bytes.
+                while poll_fn(|cx| r.poll_drain(cx, &mut bytes)).await.unwrap() != 0 {}
+                assert_eq!(str::from_utf8(&bytes).unwrap(), TEXT);
+            });
+        })
+        .add(move || {
+            block_on(async move {
+                w.write_all(TEXT.as_bytes()).await.unwrap();
+                drop(w);
+            });
+        })
+        .run();
 }
