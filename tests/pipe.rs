@@ -104,7 +104,7 @@ fn zero_cap_pipe() {
 #[should_panic]
 #[test]
 fn large_pipe() {
-    let _ = pipe(core::usize::MAX);
+    let _ = pipe(usize::MAX);
 }
 
 #[test]
