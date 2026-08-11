@@ -1257,12 +1257,8 @@ impl WriteLike for WriteBytes<'_> {
         let n = self.0.len().min(buf.len());
         self.0[..n].copy_from_slice(&buf[..n]);
 
-        // mem::take() is not available on 1.36
-        #[allow(clippy::mem_replace_with_default)]
-        {
-            let slice = mem::replace(&mut self.0, &mut []);
-            self.0 = &mut slice[n..];
-        }
+        let slice = mem::take(&mut self.0);
+        self.0 = &mut slice[n..];
 
         Ok(n)
     }
