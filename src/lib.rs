@@ -723,7 +723,7 @@ impl Reader {
         mut cx: Option<&mut Context<'_>>,
         mut dest: W,
     ) -> Poll<Result<usize, W::Error>> {
-        if !ready!(self.poll_available(cx.as_mut().map(|c| &mut **c))) {
+        if !ready!(self.poll_available(cx.as_deref_mut())) {
             // The pipe is closed
             return Poll::Ready(Ok(0));
         }
@@ -1077,7 +1077,7 @@ impl Writer {
         mut cx: Option<&mut Context<'_>>,
         mut src: R,
     ) -> Poll<Result<usize, R::Error>> {
-        if !ready!(self.poll_inner(cx.as_mut().map(|c| &mut **c))) {
+        if !ready!(self.poll_inner(cx.as_deref_mut())) {
             return Poll::Ready(Ok(0));
         }
 
