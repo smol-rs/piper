@@ -6,7 +6,7 @@ license = "MIT OR Apache-2.0"
 name = "piper"
 repository = "https://github.com/smol-rs/piper"
 version = "0.2.5"
-rust-version = "1.36"
+rust-version = "1.63"
 
 [features]
 default = ["std"]
